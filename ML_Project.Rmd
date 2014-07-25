@@ -1,0 +1,120 @@
+---
+title: "Practical Machine Learning Project for Weight Lifting Exercise Predictions"
+author: "Javier Segovia"
+date: "24/07/2014"
+output: html_document
+---
+
+## Including Libraries
+
+```{r, echo=TRUE}
+library(caret)
+library(kernlab)
+library(randomForest)
+```
+
+## Raw Data
+
+Here the training and final test is read as raw data from 2 different csv files.
+
+```{r, echo=TRUE}
+raw.tr<-read.csv("pml-training.csv")
+raw.fts<-read.csv("pml-testing.csv")
+```
+
+## Preprocessing
+
+### Data Partition
+
+In order to have a reproducible experiment, the seed "6789" is assigned, this will produce the same pseudo-random numbers list to create the data partition of the raw training set, to split it into a new training set (80% of the cases) and a new test set (20% of the cases) used for cross-validation.
+
+```{r, echo=TRUE}
+set.seed(6789)
+classe <- raw.tr$classe
+it<-createDataPartition(classe, p = 0.8, list = FALSE)
+tr<-raw.tr[it,]
+ts<-raw.tr[-it,]
+```
+
+### Zero or Near-Zero Variance
+
+When a variable has zero or near zero variance means that is not relevant to be used in a predictor model, because different outcomes will have similar values on that variables, so the can be deleted from the training and test set, creating in that way an easier set to train the model.
+
+```{r, echo=TRUE}
+nzv <- nearZeroVar(tr)
+tr<-tr[-nzv]
+ts<-ts[-nzv]
+fts<-raw.fts[-nzv]
+```
+
+### Numeric Columns
+
+Then, to build a regression model, numerical columns are required but in the training set there is also other classes of variables like integers or factors that can lead to misclassification of the variable "classe" in the predictor, so the approach is to avoid these columns. 
+
+```{r, echo=TRUE}
+ok.cols = which(lapply(tr, class) %in% c("numeric"))
+tr   <-tr [,ok.cols]
+ts   <-ts [,ok.cols]
+fts  <-fts[,ok.cols]
+```
+
+### Imputing Missing Values
+
+There are various preProcess methods that impute missing values in the data sets to have a better regression model, but it might introduce some bias. K-nearest neighbor ("knnImpute") finds the k closest samples, bagging fits a bagged tree model for each predictor ("bagImpute") it is very slow but has high accurancy, and the medians ("medianImpute") is fast but treats each predictor independently and may be inaccurate. Thus, the choice is to use "knnImpute" for pre-processing the data.
+
+```{r,echo=TRUE}
+pp         <- preProcess(tr, method = c("knnImpute"))
+transf.tr  <- data.frame(classe = classe[it] , predict(pp, tr))
+transf.ts  <- data.frame(classe = classe[-it], predict(pp, ts))
+transf.fts <- predict(pp, fts)
+```
+
+
+## The Model
+
+There are a lot of models to be chosen in ML, but the one used for this project is the random forest explained in the subject videos and slides.
+
+### Random Forest
+
+It implements the Breiman's random forest algorithm for classification and regression, and the way it is used is the function "randomForest", using the formula "classe ~ ." that means the classe is the outcome of the prediction and the rest of variables are the predictors, and the data is the transformed training set that is the training data after the preprocessing. The total number of trees in the forest is 100 and the number of random variables for each tree is 10 (to avoid overfitting).
+
+```{r, echo=TRUE}
+mf.RF<-randomForest(classe ~ ., transf.tr, ntree = 100, mtry = 10)
+```
+
+## Cross-Validation
+The idea in CV is that the model fits correctly the training set and avoid overfitting for the test set, to use a model that predicts with high accuracy. With tha random forest model it must generalize well the problem due to the quantity of trees used in the forest and an acceptable number of random variables.
+
+### In-sample Error
+The predictions in the training set using the random forest model has an accuracy of 100%. It is a good result for the training data but it is possible to have overfitting, so the out-of sample error must be checked to know if the model generalizes correctly or not.
+
+```{r, echo=TRUE}
+prediction.tr<-predict(mf.RF, transf.tr)
+print(confusionMatrix(prediction.tr, transf.tr$classe))
+```
+
+### Out-of-sample Error
+
+Thus, the out-of-sample error for the test set confirms with a 99.1% of accuracy that the model generalizes correctly, so it can be used for the final test set to predict the final results.
+
+```{r, echo=TRUE}
+prediction.ts<-predict(mf.RF, transf.ts)
+print(confusionMatrix(prediction.ts, transf.ts$classe))
+```
+
+## Results
+
+Finally, the testing file predicted with the randomForest model lead to a 100% accuracy over the small test set whose solutions are printed below, that solutions have been separated into different files the provided function "pml_write_files" due to the independent submissions of each case for the programming part of the project.
+
+```{r, echo=TRUE}
+answers<-predict(mf.RF, transf.fts)
+print(answers)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
